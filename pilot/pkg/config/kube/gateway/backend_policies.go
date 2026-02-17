@@ -125,6 +125,7 @@ func (b BackendPolicy) Equals(other BackendPolicy) bool {
 func DestinationRuleCollection(
 	trafficPolicies krt.Collection[*gatewayx.XBackendTrafficPolicy],
 	tlsPolicies krt.Collection[*gw.BackendTLSPolicy],
+	configMaps krt.Collection[*v1.ConfigMap],
 	ancestors krt.Index[TypedNamespacedName, AncestorBackend],
 	references *ReferenceSet,
 	domainSuffix string,
@@ -139,7 +140,7 @@ func DestinationRuleCollection(
 	// Gateway API community if having the Gateway as an ancestor ref is required or not; we would prefer it to not be if possible.
 	// Until conformance requires it, for now we skip it.
 	ancestorCollection := ancestors.AsCollection(append(opts.WithName("AncestorBackend"), TypedNamespacedNameIndexCollectionFunc)...)
-	tlsPolicyStatus, backendTLSPolicies := BackendTLSPolicyCollection(tlsPolicies, ancestorCollection, references, domainSuffix, opts)
+	tlsPolicyStatus, backendTLSPolicies := BackendTLSPolicyCollection(tlsPolicies, configMaps, ancestorCollection, references, domainSuffix, opts)
 	status.RegisterStatus(c.status, tlsPolicyStatus, GetStatus, c.tagWatcher.AccessUnprotected())
 
 	// We need to merge these by hostname into a single DR
@@ -281,6 +282,7 @@ func DestinationRuleCollection(
 
 func BackendTLSPolicyCollection(
 	tlsPolicies krt.Collection[*gw.BackendTLSPolicy],
+	configMaps krt.Collection[*v1.ConfigMap],
 	ancestors krt.IndexCollection[TypedNamespacedName, AncestorBackend],
 	references *ReferenceSet,
 	domainSuffix string,
@@ -316,6 +318,17 @@ func BackendTLSPolicyCollection(
 			}
 			return nil
 		})
+		// Establish krt dependency on referenced ConfigMaps so that ConfigMap
+		// create/update/delete events trigger BackendTLSPolicy recomputation.
+		// Without this, ConfigMaps are looked up via GetKey() (through ReferenceSet)
+		// which does not register a krt dependency — violating the framework's
+		// transformation constraints and causing stale data on startup races or
+		// ConfigMap rotation (see https://github.com/istio/istio/issues/59021).
+		for _, ref := range s.Validation.CACertificateRefs {
+			if ref.Kind == "" || ref.Kind == "ConfigMap" {
+				krt.FetchOne(ctx, configMaps, krt.FilterKey(i.Namespace+"/"+string(ref.Name)))
+			}
+		}
 		tls.CredentialName = getBackendTLSCredentialName(s.Validation, i.Namespace, conds, references)
 
 		// In ancestor status, we need to report for Service (for mesh) and for each relevant Gateway.

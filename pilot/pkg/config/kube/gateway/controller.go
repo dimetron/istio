@@ -358,6 +358,7 @@ func NewController(
 	DestinationRules := DestinationRuleCollection(
 		inputs.BackendTrafficPolicy,
 		inputs.BackendTLSPolicies,
+		inputs.ConfigMaps,
 		AncestorsIndex,
 		references,
 		c.domainSuffix,
